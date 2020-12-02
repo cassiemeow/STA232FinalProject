@@ -1,0 +1,56 @@
+---
+title: "STA232A - Final Project"
+author: "Cassie Xu"
+date: "12/1/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F)
+library("devtools")
+library('sf')
+library("mapview")
+library("readxl")
+library(ggplot2)
+
+real = read_excel("/Users/xuchenghuiyun/Desktop/PhD/2020 Fall/232 A/Real_estate_valuation.xlsx")
+colnames(real) = c("No.","transac_date","house_age","distance_to_MRT","conv_store",
+                   "latitude","longitude","price")
+real$price_cut = ifelse(real$price>=38,">=38","<38")
+```
+
+```{r}
+real_estates <- st_as_sf(real, coords = c("X6 longitude", "X5 latitude"), crs = 4326)
+mapview(real_estates)
+```
+
+```{r}
+map <- get_stamenmap(bbox = c(left = 121.4734, bottom = 24.93206, right =
+121.5664, top = 25.0146), zoom = 15, maptype = "terrain")
+
+ggmap(map) +
+  geom_point(data = real, aes(x = longitude, y = latitude, color=price),
+            alpha = 1) +
+    labs(x="longitude", y="latitude", title="") +
+  scale_colour_gradient(
+  low = "pink",
+  high = "black")
+
+ggmap(map) + 
+  geom_density_2d(data = real, aes(x = longitude, y = latitude))
+
+
+
+
+
+```
+
+
+
+
+
+
+
+
+
+
