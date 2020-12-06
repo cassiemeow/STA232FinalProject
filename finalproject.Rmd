@@ -7,25 +7,27 @@ output: html_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = F)
-library("devtools")
-library('sf')
-library("mapview")
-library("readxl")
-library(ggplot2)
 
-real = read_excel("/Users/xuchenghuiyun/Desktop/PhD/2020 Fall/232 A/Real_estate_valuation.xlsx")
-colnames(real) = c("No.","transac_date","house_age","distance_to_MRT","conv_store",
-                   "latitude","longitude","price")
-real$price_cut = ifelse(real$price>=38,">=38","<38")
+packages = c("mapview","readxl","ggplot2","GGally","ggmap","psych","naniar",
+             "dplyr","DataCombine")
+lapply(packages, require, character.only = TRUE)
+
+real = read_excel("/Users/xuchenghuiyun/Desktop/PhD/2020 Fall/232 A/STA232FinalProject/Real_estate_valuation.xlsx")
+colnames(real) = c("No.","date","age","MRT","store", "latitude","longitude","price")
 ```
 
+#### Interacitive & informatic maps
+
 ```{r}
-real_estates <- st_as_sf(real, coords = c("X6 longitude", "X5 latitude"), crs = 4326)
+# interactive plot, but does not show information of price
+real_estates <- st_as_sf(real, coords = c("longitude", "latitude"), crs = 4326)
 mapview(real_estates)
 ```
 
 ```{r}
-map <- get_stamenmap(bbox = c(left = 121.4734, bottom = 24.93206, right =
+#real$price_cut = ifelse(real$price>=38,">=38","<38")
+
+map = get_stamenmap(bbox = c(left = 121.4734, bottom = 24.93206, right =
 121.5664, top = 25.0146), zoom = 15, maptype = "terrain")
 
 ggmap(map) +
@@ -36,14 +38,95 @@ ggmap(map) +
   low = "pink",
   high = "black")
 
-ggmap(map) + 
-  geom_density_2d(data = real, aes(x = longitude, y = latitude))
+#ggmap(map) + 
+#  geom_density_2d(data = real, aes(x = longitude, y = latitude))
+```
 
 
+#### Exploratory Analysis 
 
+##### Missing Data Check
 
+```{r}
+vis_miss(real[-1])
+```
+
+No missing data present.
+
+##### Descriptive Statistics
+
+```{r}
+des = as.data.frame(describe(real[-1]))[-c(6,7)]
+knitr::kable(des, align = "c")
+```
+
+##### Outliers *here or at the modeling step*
+
+```{r}
 
 ```
+
+
+##### Correlation Plots & Multicollinearity Check
+
+```{r}
+corp = ggcorr(real[-1])
+pairp = ggpairs(real[-1], lower = list(continuous = wrap("smooth_loess", alpha = 1, size = 1, color='#00BFC4')), upper = list(continuous = wrap("cor", alpha = 1, size = 3))) +
+  theme(axis.text.x = element_text(size = 6, angle = 90),
+        axis.text.y = element_text(size = 6))
+ggarrange(corp, pairp, ncol = 2, nrow = 1)
+
+# condition number calculation
+x = scale(real[-1])
+lambda = eigen(t(x)%*%x)
+condition = lambda$values[1] / lambda$values[7]
+```
+
+From the correlation plots above, it seems that house age and transaction date do not have much correlation with price. *Since they all somewhat are related to geographic location, correlations between factors "distance to nearest MRT", "number of convenient stores", "longitude" and "latitude" are not negligible and should be taken care of*.
+
+Since the condition number is `r round(condition,3)` which is smaller than 100, we can conclude that there does not exist collinearity among the predictors.
+
+##### Response Variable Manipulation
+
+```{r}
+ggplot(real, aes(x=price)) + 
+  geom_histogram(binwidth = 5) +
+  xlab("House Price") +
+  ylab("Count") +
+  theme_bw()
+
+price_c = cut(real$price[which(real$price<90)], breaks = 4,labels = c("low","median-low","median-high","high")) %>% as.data.frame()
+price_c2 = InsertRow(price_c, "extreme", real[which(real$price>90),]$`No.`)
+price_c2$. = as.character(price_c2$.)
+price_c2[real[which(real$price>90),]$`No.`,] = "extreme"
+```
+
+From the histogram, it seems that the response variable "price" is right skewed. For houses' price smaller than 90 * 10000 New Taiwan Dollar/Ping, the distribution is pretty normal, and the only "outlier" is the one that is 117.5 * 10000 New Taiwan Dollar/Ping. Thus, we can divide the variable into five levels. First four levels are obtained by cutting the price less than 90 evenly which are labeled "low", "median-low", "median-high" and "high". The last level is the "outlier", which is labeled as "extreme". *might need to change how we divide the levels since the last level only has one value right now. division of levels is also good for doing classification later*
+
+
+#### Regression Analysis
+
+##### Model Selection
+
+```{r}
+n = dim(real[-1])[1]
+p = dim(real[-1])[2]
+
+fit = lm(price~., data = real[-1])
+summary(fit)
+
+lm.both.AIC = step(fit, k=2, direction="both", test="F", trace=T)
+lm.both.BIC = step(fit, k=log(n), direction="both", test="F", trace=T)
+
+sub = leaps::regsubsets(price~.-1, data=real)
+plot(sub, scale="adjr2") 
+#Since the top two models both have adjusted R2 = 0.58, they are equally good in terms of adjusted R2
+```
+
+##### Model Diagnostics
+
+
+#### Classification
 
 
 
