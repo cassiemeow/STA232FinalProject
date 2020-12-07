@@ -158,6 +158,17 @@ vif(fit_log)
 
 $$\mathbb{Y}_i = -14441.983 + 5.15 X_{1i} - 0.27 X_{2i} - 0.004 X_{3i} + 1.133 X_{4i} + 225.47 X_{5i} - 12.429 X_{6i}$$, where $X_{1i}$ is transaction date, $X_{2i}$ is house age, $X_{3i}$ is the distance to the nearest MRT station, $X_{4i}$ is the number of convenient stores nearby, $X_{5i}$ is latitude and $X_{6i}$ is longitude.
 
+##### LOOCV
+
+```{r}
+library(caret)
+train.control = trainControl(method = "LOOCV")
+model_1 = train(price ~ .-longitude, data = real, method = "lm", trControl = train.control )
+print(model_1)
+model_2 = train(price ~ ., data = real, method = "lm", trControl = train.control )
+print(model_2)
+```
+
 ##### Model Diagnostics
 
 ```{r}
@@ -500,6 +511,7 @@ knitr::kable(pe, align = "c")
 #### Generalized Linear Model
 
 ```{r}
+price_c = cut(real$price, breaks = c(7.49, 35.1, 62.6, 118), labels = c("low","median","high"))
 ###proportional odds model
 library(MASS)
 real_c = data.frame(real[-1], price_c)
