@@ -268,7 +268,72 @@ varImpPlot(rf.obj,main = "RF")
 ```{r}
 
 ```
+#### Generalized Linear Model
 
+```{r}
+###proportional odds model
+library(MASS)
+real_c = data.frame(real[-1], price_c)
+names(real_c)[8] = "price_c"
+fit.plr = polr(price_c ~ .-price,data = real_c)
+summary(fit.plr)
+prd_prob.po = predict(fit.plr, real_c, type="prob")
+prd_labl.po = predict(fit.plr, real_c)
+label = data.frame(price_c,prd_labl_po)
+sum(label[,1]!=label[,2])
+
+###baseline odds model
+library(nnet)
+
+fit.bo = multinom(price_c~.-price,data=real_c)
+summary(fit.bo)
+
+prd_prob.bo = predict(fit.bo, type = 'prob')
+prd_labl.bo = predict(fit.bo)
+
+#label2 = data.frame(price_c,prd_labl_bo)
+#sum(label2[,1]!=label2[s,2])
+
+t.est1 = summary(fit.bo)$coefficients[1,]/summary(fit.bo)$standard.errors[1,]
+
+table.est1 = data.frame(Estimate1=summary(fit.bo)$coefficients[1,],
+                        std.error1=summary(fit.bo)$standard.errors[1,],
+                        t_value1=round(t_est1,3))
+
+t.est2 = summary(fit.bo)$coefficients[2,]/summary(fit.bo)$standard.errors[2,]
+
+table.est2 = data.frame(Estimate2=summary(fit.bo)$coefficients[2,],
+                        std.error2=summary(fit.bo)$standard.errors[2,],
+                        t_value2=round(t_est2,3))
+
+table.est = data.frame(table.est1, table.est2)
+knitr::kable(table.est)
+
+obslabel <- matrix(0, nrow = nrow(real), ncol = length(levels(price_c)))
+for (i in seq_len(nrow(real))) obslabel[i,which(colnames(prd_prob.bo)==real_c$price_c[i])] = 1
+
+resP.bo<-(obslabel-prd_prob.bo)/sqrt(prd_prob.bo*(1-prd_prob.bo))
+
+par(mfrow=c(1,2))
+plot(fit.bo$fitted.values[,2],resP.bo[,2],pch=16, cex=0.6, 
+     ylab='Pearson Residuals', xlab='Fitted Values',
+#     ylim=c(-10,10),
+     main='Baseline Odds Model - Medium Level')
+lines(smooth.spline(fit.bo$fitted.values[,2],resP.bo[,2], spar=2), col=2)
+lines(ksmooth(fit.bo$fitted.values[,2],resP.bo[,2], "normal", bandwidth=0.1), col='green')
+abline(h=0, lty=2, col='grey')
+
+plot(fit.bo$fitted.values[,3],resP.bo[,3],pch=16, cex=0.6, 
+     ylab='Pearson Residuals', xlab='Fitted Values',
+#     ylim=c(-10,10),
+     main='Baseline Odds Model - High Level')
+lines(smooth.spline(fit.bo$fitted.values[,3],resP.bo[,3], spar=2), col=2)
+lines(ksmooth(fit.bo$fitted.values[,3],resP.bo[,3], "normal", bandwidth=0.1), col='green')
+abline(h=0, lty=2, col='grey')
+
+library(lawstat)
+runs.test(y = resP.bo, plot.it = FALSE)
+```
 
 
 
