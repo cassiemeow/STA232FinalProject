@@ -9,18 +9,18 @@ output: html_document
 knitr::opts_chunk$set(echo = F)
 
 packages = c("mapview","readxl","ggplot2","GGally","ggmap","psych","naniar",
-             "dplyr","DataCombine")
+             "dplyr","DataCombine", "egg", "car")
 lapply(packages, require, character.only = TRUE)
 
 real = read_excel("/Users/xuchenghuiyun/Desktop/PhD/2020 Fall/232 A/STA232FinalProject/Real_estate_valuation.xlsx")
 colnames(real) = c("No.","date","age","MRT","store", "latitude","longitude","price")
 ```
 
-#### Interacitive & informatic maps
+#### Interacitive & Informatic Maps
 
 ```{r}
 # interactive plot, but does not show information of price
-real_estates <- st_as_sf(real, coords = c("longitude", "latitude"), crs = 4326)
+real_estates <- sf::st_as_sf(real, coords = c("longitude", "latitude"), crs = 4326)
 mapview(real_estates)
 ```
 
@@ -60,21 +60,22 @@ des = as.data.frame(describe(real[-1]))[-c(6,7)]
 knitr::kable(des, align = "c")
 ```
 
-##### Outliers *here or at the modeling step*
+##### Outliers
 
 ```{r}
 
 ```
 
+We do not have super off data points.
 
 ##### Correlation Plots & Multicollinearity Check
 
 ```{r}
-corp = ggcorr(real[-1])
+corp = ggcorr(real[-1], label = T)
 pairp = ggpairs(real[-1], lower = list(continuous = wrap("smooth_loess", alpha = 1, size = 1, color='#00BFC4')), upper = list(continuous = wrap("cor", alpha = 1, size = 3))) +
   theme(axis.text.x = element_text(size = 6, angle = 90),
         axis.text.y = element_text(size = 6))
-ggarrange(corp, pairp, ncol = 2, nrow = 1)
+#ggarrange(corp, pairp, ncol = 2, nrow = 1)
 
 # condition number calculation
 x = scale(real[-1])
@@ -86,27 +87,11 @@ From the correlation plots above, it seems that house age and transaction date d
 
 Since the condition number is `r round(condition,3)` which is smaller than 100, we can conclude that there does not exist collinearity among the predictors.
 
-##### Response Variable Manipulation
-
-```{r}
-ggplot(real, aes(x=price)) + 
-  geom_histogram(binwidth = 5) +
-  xlab("House Price") +
-  ylab("Count") +
-  theme_bw()
-
-price_c = cut(real$price[which(real$price<90)], breaks = 4,labels = c("low","median-low","median-high","high")) %>% as.data.frame()
-price_c2 = InsertRow(price_c, "extreme", real[which(real$price>90),]$`No.`)
-price_c2$. = as.character(price_c2$.)
-price_c2[real[which(real$price>90),]$`No.`,] = "extreme"
-```
-
-From the histogram, it seems that the response variable "price" is right skewed. For houses' price smaller than 90 * 10000 New Taiwan Dollar/Ping, the distribution is pretty normal, and the only "outlier" is the one that is 117.5 * 10000 New Taiwan Dollar/Ping. Thus, we can divide the variable into five levels. First four levels are obtained by cutting the price less than 90 evenly which are labeled "low", "median-low", "median-high" and "high". The last level is the "outlier", which is labeled as "extreme". *might need to change how we divide the levels since the last level only has one value right now. division of levels is also good for doing classification later*
 
 
 #### Regression Analysis
 
-##### Model Selection
+##### Model Selection: AIC, BIC, 10-fold CV
 
 ```{r}
 n = dim(real[-1])[1]
@@ -118,15 +103,171 @@ summary(fit)
 lm.both.AIC = step(fit, k=2, direction="both", test="F", trace=T)
 lm.both.BIC = step(fit, k=log(n), direction="both", test="F", trace=T)
 
-sub = leaps::regsubsets(price~.-1, data=real)
+sub = leaps::regsubsets(price~.-1, data=real, method="exhaustive")
+reg.sum = summary(sub)
+#par(mfrow=c(2,2))
+plot(sub, scale="bic") 
+plot(sub, scale="Cp") 
 plot(sub, scale="adjr2") 
+plot(sub, scale="r2") 
 #Since the top two models both have adjusted R2 = 0.58, they are equally good in terms of adjusted R2
+
+plot(x=1:6,reg.sum$cp,xlab="number of predictors",ylab="Cp",type="b");points(which.min(reg.sum$cp),reg.sum$cp[which.min(reg.sum$cp)],col ="red",cex=2,pch=20)
 ```
+
+```{r}
+# Cross validation regsubset
+set.seed(1)
+train=sample(c(TRUE,FALSE),nrow(real),rep=TRUE)
+test=(!train)
+regfit.best=leaps::regsubsets(price~.,data=real[train,],nvmax =7)
+
+# val.errors =rep(NA ,7)
+# for(i in 1:7){
+#  pred = predict(regfit.best,newdata=real[test,],id=i)
+#  val.errors [i]= mean(( real$price[test]-pred)^2)
+# }
+# val.errors
+# which.min(val.errors)
+# coef(regfit.best,id=which.min(val.errors))
+
+k=10
+set.seed (1)
+folds=sample(1:k,nrow(real),replace =TRUE)
+cv.errors=matrix(NA,k,6,dimnames=list(NULL,paste(1:6)))
+ok = real[,-1]
+for(j in 1:k) {
+  best.fit=leaps::regsubsets(price~., data=ok[folds!=j,], nvmax = 6)
+  for(i in 1:6) {
+    pred = predict(best.fit, ok[folds==j,], id=i)
+    cv.errors[j,i]=mean((real$price[folds==j]-pred)^2)
+  }
+}
+mean.cv.errors=apply(cv.errors,2,mean)
+plot(mean.cv.errors,type="b");points(which.min(mean.cv.errors),mean.cv.errors[which.min(mean.cv.errors)],col="red",pch=20, cex=2)
+
+reg.best = leaps::regsubsets(price ~ . ,data=real[-1], nvmax =6)
+coef(reg.best, 5)
+```
+
+Using BIC as a criterion for variable selection, we have three options: full model, a sub-model without the factor "longitude", and a sub-model without the factors "longitude" and "date". We can discuss them separately:
+
+##### ------------- Model 1 -------------: Full Model
+
+```{r eval=F}
+#round(summary(fit)$coefficients[,1],3)
+summary(fit)
+vif(fit) # MRT is moderate
+plot(fit)
+
+fit2 = lm(price~., real[,-c(1,7)])
+summary(fit2)
+vif(fit2) # better
+```
+
+$$\mathbb{Y}_i = -14441.983 + 5.15 X_{1i} - 0.27 X_{2i} - 0.004 X_{3i} + 1.133 X_{4i} + 225.47 X_{5i} - 12.429 X_{6i}$$, where $X_{1i}$ is transaction date, $X_{2i}$ is house age, $X_{3i}$ is the distance to the nearest MRT station, $X_{4i}$ is the number of convenient stores nearby, $X_{5i}$ is latitude and $X_{6i}$ is longitude.
 
 ##### Model Diagnostics
 
+```{r}
+plot(fit2)
+
+anova(fit2, fit) # the submodel is preffered
+
+shapiro.test(fit2$residuals) # H0: Errors are normally distributed: Since p-value is less than 0.05, it is significant to reject the null hypothesis that the errors are normally distributed. Hence the assumption of normality is violated.
+durbinWatsonTest(fit2) # H0:Errors are uncorrelated: Since p-value is greater than 0.05, cannot reject H0, which means errors are uncorrelated, hence the uncorrelation assumption is not violated.
+ncvTest(fit2) # H0:Errors have a constant vairance: Since p-value is less than 0.05, it is significant to reject the H0 and which means the constant variance assumption is violated.
+```
+
 
 #### Classification
+
+##### Response Variable Manipulation
+
+```{r}
+ggplot(real, aes(x=price)) + 
+  geom_histogram(binwidth = 5) + 
+  xlab("House Price") + 
+  ylab("Count") + 
+  theme_bw()
+
+#price_c = cut(real$price, breaks = 4,labels = c("low","median-low","median-high","high")) %>% as.data.frame()
+# price_c2 = InsertRow(price_c, "high", real[which(real$price>90),]$`No.`)
+# price_c2$. = as.character(price_c2$.)
+# price_c2[real[which(real$price>90),]$`No.`,] = "high"
+# table(price_c)
+price_c = cut(real$price, breaks = c(7.49,35.1,118),labels = c("low","high"))
+real$price_c = price_c
+
+#glm.fit = glm(price_c~.-price_c, data=data, family = binomial())
+#summary(glm.fit)
+```
+
+From the histogram, it seems that the response variable "price" is right skewed. For houses' price smaller than 90 * 10000 New Taiwan Dollar/Ping, the distribution is pretty normal, and the only "outlier" is the one that is 117.5 * 10000 New Taiwan Dollar/Ping. Thus, we can divide the variable into four levels, which are "low", "median-low", "median-high" and "high". 
+
+
+##### Tree-based Method
+
+```{r}
+data = real[,-c(1,8)]
+mytree = tree(price_c ~.-price_c, data=data, method = "gini")
+summary(mytree)
+plot(mytree);text(mytree,pretty=0,digits=3)
+
+# use CV to choose size of the tree
+set.seed(24543)
+train = sample(1:nrow(real), size = ceiling(nrow(real)/2), replace=FALSE)
+mytree = tree(price_c ~.-price_c, data=data, 
+              method = "gini", subset=train)
+mytree.cv = cv.tree(mytree, FUN=prune.misclass, K=10)
+
+plot(dev~size, data=as.data.frame(mytree.cv[1:3]),type="b")
+points(x=mytree.cv$size[mytree.cv$dev==min(mytree.cv$dev)],
+y=rep(min(mytree.cv$dev),sum(mytree.cv$dev==min(mytree.cv$dev))),col="red",pch=19) # dev corresponds to the cross-validation error rate in this instance
+# The tree with 2,4,9 terminal nodes results in the lowest cross-validation error rate, with 30 cross-validation errors.
+
+final.tree = prune.tree(mytree,
+                        best=mytree.cv$size[mytree.cv$dev==min(mytree.cv$dev)])
+plot(final.tree); text(final.tree,pretty=3,digits=3)
+
+# assess prediction error
+mypredict=predict(final.tree,newdata=
+                    data[-train,-match("price_c",colnames(data))],
+                  type="class")
+tmp = table(mypredict, data$price_c[-train])
+1-sum(diag(tmp)/sum(tmp)) # trash 0.1545894
+```
+
+##### Random Forests
+
+```{r}
+require(randomForest)
+#Bagged tree
+rf.obj = randomForest(price_c ~.-price_c,
+                    data=data, subset = train,
+                    mtry=13, ntree=500, importance=TRUE)
+importance(rf.obj)
+varImpPlot(rf.obj,main = "RF")
+
+#Random Forest
+rf.obj=randomForest(price_c ~.-price_c,
+                    data=data,subset=train,mtry=4,ntree=500,importance=TRUE)
+importance(rf.obj)
+varImpPlot(rf.obj,main = "RF")
+# Two measures of variable importance are reported. The former is based upon the mean decrease of accuracy in predictions on the out of bag samples when a given variable is excluded from the model. The latter is a measure total decrease in node impurity that results from splits over that variable, averaged over all trees (Gini indec). In the case of regression trees, the node impurity is measured by the training RSS, and for classification trees by the deviance.
+```
+
+##### SVM
+
+```{r}
+```
+
+
+#### PCA
+
+```{r}
+
+```
 
 
 
