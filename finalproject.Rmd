@@ -585,6 +585,41 @@ library(lawstat)
 runs.test(y = resP.bo, plot.it = FALSE)
 ```
 
+#### LOOCV
+```{r}
+train.control = trainControl(method="LOOCV")
+
+###AIC method
+model1 = train(price ~ date + age + MRT + store + latitude + longitude + age:longitude + MRT:store +
+               MRT:latitude + store:latitude, data = real, method = "lm", trControl = train.control)
+
+###BIC method
+model2 = train(price ~ date + age + MRT + store + latitude + MRT:store + MRT:latitude + store:latitude,
+               data = real, method = "lm", trControl = train.control)
+
+###regsubsets method
+model3 = train(price ~ date + age + MRT + store + latitude + age:latitude + MRT:store + MRT:latitude +
+                 store:latitude, data = real, method = "lm", trControl = train.control)
+
+###full model
+model4 = train(formula, data = real, method = "lm", trControl = train.control)
+
+RMSE = c(model1$results$RMSE, model2$results$RMSE, model3$results$RMSE, model4$results$RMSE)
+R2 = c(model1$results$Rsquared, model2$results$Rsquared, model3$results$Rsquared,
+       model4$results$Rsquared)
+MAE = c(model1$results$MAE, model2$results$MAE, model3$results$MAE,
+       model4$results$MAE)
+table.LOOCV = data.frame(RMSE, R2, MAE)
+rownames(table.LOOCV) = c('M1', 'M2', 'M3', 'M4')
+knitr::kable(table.LOOCV)
+```
+### Final model diagnostics
+```{r}
+final.fit = lm(price ~ date + age + MRT + store + latitude + MRT:store + MRT:latitude + store:latitude,
+               data = real)
+summary(final.fit)
+par(mfrow = c(2,2))
+plot(final.fit, which = 1:4)
 
 
 
