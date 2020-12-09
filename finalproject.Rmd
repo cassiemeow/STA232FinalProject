@@ -209,14 +209,34 @@ rownames(table.LOOCV) = c('M1', 'M2', 'M3', 'M4')
 knitr::kable(table.LOOCV)
 
 ### Final model diagnostics
-final.fit = lm(log(price) ~ date + age + MRT + store + latitude + 
-    MRT:store + MRT:latitude + store:latitude,
-               data = real)
+final.fit = lm(price ~ date + age + MRT + store + latitude + I(age^2) + 
+    MRT:store + MRT:latitude + store:latitude, data = real)
 round(summary(final.fit)$coefficients,7)[,1:3] %>% as.data.frame()
 par(mfrow = c(2,2))
 plot(final.fit, which = 1:4)
 
 vif(final.fit)
+
+par(mfrow=c(2,2))
+plot(final.fit)[1:3]
+
+
+# # leverage plot
+# leverage = hatvalues(final.fit)
+# plot(names(leverage), leverage, xlab="Index", type="h", main="Graph 3.2: Leverage Plot")
+# points(names(leverage), leverage, pch=16, cex=0.6)
+# p <- length(coef(final.fit))
+# n <- nrow(real)
+# abline(h=2*p/n,col=2,lwd=2,lty=2)
+# infPts <- which(leverage>2*p/n)
+# 
+# # cook's distance
+# cooks = cooks.distance(final.fit)
+# 
+# plot(cooks, ylab="Cook's Distance", pch=16, cex=0.6)
+# points(infPts, cooks[infPts], pch=17, cex=0.8, col=2)
+# susPts <- as.numeric(names(sort(cooks[infPts], decreasing=TRUE)[1:3]))
+# text(susPts, cooks[susPts], susPts, adj=c(-0.1,-0.1), cex=0.7, col=4)
 ```
 
 ##### Model Diagnostics
