@@ -10,7 +10,7 @@ knitr::opts_chunk$set(echo = F)
 #install.packages("glmnet")
 packages = c("mapview","readxl","ggplot2","GGally","ggmap","psych","naniar",
              "dplyr","DataCombine", "egg", "car", "MASS", "class","naivebayes",
-             "glmnet")
+             "glmnet", "caret", "stringr")
 lapply(packages, require, character.only = TRUE)
 
 real = read_excel("/Users/xuchenghuiyun/Desktop/PhD/2020 Fall/232 A/STA232FinalProject/Real_estate_valuation.xlsx")[-1]
@@ -75,6 +75,12 @@ ggpairs(real, lower = list(continuous = wrap("smooth_loess", alpha = 1, size = 1
 x = scale(real)
 lambda = eigen(t(x)%*%x)
 condition = lambda$values[1] / lambda$values[7]
+
+
+ggplot(real, aes(x = longitude, y = price)) + 
+  geom_point() + 
+  theme_bw() +
+  geom_smooth()
 ```
 
 From the correlation plots above, it seems that house age and transaction date do not have much correlation with price. *Since they all somewhat are related to geographic location, correlations between factors "distance to nearest MRT", "number of convenient stores", "longitude" and "latitude" are not negligible and should be taken care of*.
@@ -92,14 +98,18 @@ n = dim(real)[1]
 p = dim(real)[2]
 
 tmp = paste0(combn(x=colnames(real[,-7]),m=2)[1,],"*",combn(x=colnames(real[,-7]),m=2)[2,])
-formula = as.formula(paste("price", "~", paste(tmp, collapse=" + ")))
+formula = as.formula(paste("price", "~", paste(tmp, collapse=" + "), "+I(age^2)+I(latitude^2)+I(longitude^2)"))
 
 fit.int = lm(formula, data = real)
+#summary(fit.int)
 lmint.both.BIC = step(fit.int, k=log(n), direction="both", test="F", trace=T)
 lm.both.AIC = step(fit.int, k=2, direction="both", test="F", trace=T)
 
 sub = leaps::regsubsets(formula, data=real, method="exhaustive")
 reg.sum = summary(sub)
+coefs = coef(sub, 8)
+nams = names(coefs)
+paste(nams, collapse=" + ")
 #par(mfrow=c(2,2))
 plot(sub, scale="bic") 
 plot(sub, scale="Cp") 
@@ -107,23 +117,21 @@ plot(sub, scale="adjr2")
 plot(sub, scale="r2")
 #Since the top two models both have adjusted R2 = 0.58, they are equally good in terms of adjusted R2
 
-par(mfrow=c(1,4))
-plot(x=1:6,reg.sum$cp,xlab="number of predictors",ylab="Cp",type="b");points(which.min(reg.sum$cp),reg.sum$cp[which.min(reg.sum$cp)],col ="red",cex=2,pch=20)
-
-plot(x=1:6,reg.sum$bic,xlab="number of predictors",ylab="BIC",type="b");points(which.min(reg.sum$bic),reg.sum$bic[which.min(reg.sum$bic)],col ="red",cex=2,pch=20)
-
-plot(x=1:6,reg.sum$adjr2,xlab="number of predictors",ylab="Adjusted R2",type="b");points(which.max(reg.sum$adjr2),reg.sum$adjr2[which.max(reg.sum$adjr2)],col ="red",cex=2,pch=20)
-
-plot(x=1:6,reg.sum$rsq,xlab="number of predictors",ylab="R2",type="b");points(which.max(reg.sum$rsq),reg.sum$rsq[which.max(reg.sum$rsq)],col ="red",cex=2,pch=20)
+# par(mfrow=c(2,2))
+# plot(x=1:8,reg.sum$cp,xlab="number of predictors",ylab="Cp",type="b");points(which.min(reg.sum$cp),reg.sum$cp[which.min(reg.sum$cp)],col ="red",cex=2,pch=20)
+# 
+# plot(x=1:8,reg.sum$bic,xlab="number of predictors",ylab="BIC",type="b");points(which.min(reg.sum$bic),reg.sum$bic[which.min(reg.sum$bic)],col ="red",cex=2,pch=20)
+# 
+# plot(x=1:8,reg.sum$adjr2,xlab="number of predictors",ylab="Adjusted R2",type="b");points(which.max(reg.sum$adjr2),reg.sum$adjr2[which.max(reg.sum$adjr2)],col ="red",cex=2,pch=20)
+# 
+# plot(x=1:8,reg.sum$rsq,xlab="number of predictors",ylab="R2",type="b");points(which.max(reg.sum$rsq),reg.sum$rsq[which.max(reg.sum$rsq)],col ="red",cex=2,pch=20)
 ```
 
-
-```{r}
+```{r eval=F}
 # Cross validation regsubset
 set.seed(1)
 train=sample(c(TRUE,FALSE),nrow(real),rep=TRUE)
 test=(!train)
-regfit.best=leaps::regsubsets(price~.,data=real[train,],nvmax =7)
 
 predict.regsubsets = function(object, newdata, id, ...) {
     form = as.formula(object$call[[2]])
@@ -135,10 +143,12 @@ predict.regsubsets = function(object, newdata, id, ...) {
 k=10
 set.seed (1)
 folds=sample(1:k,nrow(real),replace =TRUE)
-cv.errors=matrix(NA,k,6,dimnames=list(NULL,paste(1:6)))
+cv.errors=matrix(NA,k,12,dimnames=list(NULL,paste(1:12)))
 for(j in 1:k) {
-  best.fit=leaps::regsubsets(price~., data=real[folds!=j,], nvmax = 6)
-  for(i in 1:6) {
+  best.fit=leaps::regsubsets(price ~ date * age + date * MRT + date * store + date * latitude + date * longitude + age * MRT + age * store + age * latitude + 
+    age * longitude + MRT * store + MRT * latitude + MRT * longitude + 
+    store * latitude + store * longitude + latitude * longitude, data=real[folds!=j,], nvmax = 12)
+  for(i in 1:12) {
     pred = predict(best.fit, real[folds==j,], id=i)
     cv.errors[j,i]=mean((real$price[folds==j]-pred)^2)
   }
@@ -147,50 +157,83 @@ for(j in 1:k) {
 mean.cv.errors=apply(cv.errors,2,mean)
 plot(mean.cv.errors,type="b");points(which.min(mean.cv.errors),mean.cv.errors[which.min(mean.cv.errors)],col="red",pch=20, cex=2)
 
-reg.best = leaps::regsubsets(price ~ . ,data=real, nvmax = 6)
-coef(reg.best, 5)
+reg.best = leaps::regsubsets(price ~ date * age + date * MRT + date * store + date * latitude +  date * longitude + age * MRT + age * store + age * latitude + 
+    age * longitude + MRT * store + MRT * latitude + MRT * longitude + 
+    store * latitude + store * longitude + latitude * longitude,data=real, nvmax = 8)
+coef(reg.best, 8)
 ```
 
-Using BIC as a criterion for variable selection, we have three options: full model, a sub-model without the factor "longitude", and a sub-model without the factors "longitude" and "date". We can discuss them separately:
+##### Log-transformed Response - Model Fitting
 
-##### ------------- Model 1 -------------: Full Model
+```{r}
+formula = as.formula(paste("log(price)", "~", paste(tmp, collapse=" + "), "+I(age^2)+I(latitude^2)+I(longitude^2)"))
 
-```{r eval=F}
-#round(summary(fit)$coefficients[,1],3)
-summary(fit)
-vif(fit) # MRT is moderate
-plot(fit)
+fit.int = lm(formula, data = real)
+lmint.both.BIC = step(fit.int, k=log(n), direction="both", test="F", trace=T)
+lm.both.AIC = step(fit.int, k=2, direction="both", test="F", trace=T)
 
-fit2 = lm(price~., real[,-c(1,7)])
-summary(fit2)
-vif(fit2) # better
-
-fit_log = lm(log(price) ~., real[,-c(1,7)])
-summary(fit_log)
-vif(fit_log)
+sub = leaps::regsubsets(formula, data=real, method="exhaustive")
+reg.sum = summary(sub)
+plot(sub, scale="bic") 
+# par(mfrow=c(2,2))
+# plot(x=1:8,reg.sum$cp,xlab="number of predictors",ylab="Cp",type="b");points(which.min(reg.sum$cp),reg.sum$cp[which.min(reg.sum$cp)],col ="red",cex=2,pch=20)
+# 
+# plot(x=1:8,reg.sum$bic,xlab="number of predictors",ylab="BIC",type="b");points(which.min(reg.sum$bic),reg.sum$bic[which.min(reg.sum$bic)],col ="red",cex=2,pch=20)
+# 
+# plot(x=1:8,reg.sum$adjr2,xlab="number of predictors",ylab="Adjusted R2",type="b");points(which.max(reg.sum$adjr2),reg.sum$adjr2[which.max(reg.sum$adjr2)],col ="red",cex=2,pch=20)
+# 
+# plot(x=1:8,reg.sum$rsq,xlab="number of predictors",ylab="R2",type="b");points(which.max(reg.sum$rsq),reg.sum$rsq[which.max(reg.sum$rsq)],col ="red",cex=2,pch=20)
 ```
 
-$$\mathbb{Y}_i = -14441.983 + 5.15 X_{1i} - 0.27 X_{2i} - 0.004 X_{3i} + 1.133 X_{4i} + 225.47 X_{5i} - 12.429 X_{6i}$$, where $X_{1i}$ is transaction date, $X_{2i}$ is house age, $X_{3i}$ is the distance to the nearest MRT station, $X_{4i}$ is the number of convenient stores nearby, $X_{5i}$ is latitude and $X_{6i}$ is longitude.
+#### LOOCV
+```{r}
+train.control = trainControl(method="LOOCV")
+###AIC method
+model1 = train(price ~ date + age + MRT + store + latitude + longitude + 
+    I(age^2) + age:longitude + MRT:store + MRT:latitude + store:latitude, data = real, method = "lm", trControl = train.control)
+###BIC method
+model2 = train(price ~ date + age + MRT + store + latitude + I(age^2) + 
+    MRT:store + MRT:latitude + store:latitude, data = real, method = "lm", trControl = train.control)
+###regsubsets method
+model3 = train(price ~ age + date + MRT + store +latitude+ I(age^2) + date:age + date:latitude + MRT:store + MRT:latitude + store:latitude, data = real, method = "lm", trControl = train.control)
+###full model
+model4 = train(formula, data = real, method = "lm", trControl = train.control)
+
+RMSE = c(model1$results$RMSE, model2$results$RMSE, model3$results$RMSE, model4$results$RMSE)
+R2 = c(model1$results$Rsquared, model2$results$Rsquared, model3$results$Rsquared,
+       model4$results$Rsquared)
+MAE = c(model1$results$MAE, model2$results$MAE, model3$results$MAE,
+       model4$results$MAE)
+table.LOOCV = data.frame(RMSE, R2, MAE)
+rownames(table.LOOCV) = c('M1', 'M2', 'M3', 'M4')
+knitr::kable(table.LOOCV)
+
+### Final model diagnostics
+final.fit = lm(log(price) ~ date + age + MRT + store + latitude + 
+    MRT:store + MRT:latitude + store:latitude,
+               data = real)
+round(summary(final.fit)$coefficients,7)[,1:3] %>% as.data.frame()
+par(mfrow = c(2,2))
+plot(final.fit, which = 1:4)
+
+vif(final.fit)
+```
 
 ##### Model Diagnostics
 
 ```{r}
-plot(fit2)
+plot(lmint.both.BIC)
 
-anova(fit2, fit) # the submodel is preffered
-
-shapiro.test(fit2$residuals) # H0: Errors are normally distributed: Since p-value is less than 0.05, it is significant to reject the null hypothesis that the errors are normally distributed. Hence the assumption of normality is violated.
-durbinWatsonTest(fit2) # H0:Errors are uncorrelated: Since p-value is greater than 0.05, cannot reject H0, which means errors are uncorrelated, hence the uncorrelation assumption is not violated.
-ncvTest(fit2) # H0:Errors have a constant vairance: Since p-value is less than 0.05, it is significant to reject the H0 and which means the constant variance assumption is violated.
+# shapiro.test(lmint.both.BIC$residuals) # H0: Errors are normally distributed: Since p-value is less than 0.05, it is significant to reject the null hypothesis that the errors are normally distributed. Hence the assumption of normality is violated.
+# durbinWatsonTest(lmint.both.BIC) # H0:Errors are uncorrelated: Since p-value is less than 0.05, reject H0, which means errors are correlated, hence the uncorrelation assumption is violated.
+# ncvTest(lmint.both.BIC) # H0:Errors have a constant vairance: Since p-value is less than 0.05, it is significant to reject the H0 and which means the constant variance assumption is violated.
 ```
 
-```{r}
-plot(fit_log)
 
-shapiro.test(fit_log$residuals) # H0: Errors are normally distributed: Since p-value is less than 0.05, it is significant to reject the null hypothesis that the errors are normally distributed. Hence the assumption of normality is violated.
-durbinWatsonTest(fit_log) # H0:Errors are uncorrelated: Since p-value is greater than 0.05, cannot reject H0, which means errors are uncorrelated, hence the uncorrelation assumption is not violated.
-ncvTest(fit_log) # H0:Errors have a constant vairance: Since p-value is less than 0.05, it is significant to reject the H0 and which means the constant variance assumption is violated.
-```
+
+
+
+
 
 
 
@@ -230,7 +273,7 @@ ggplot(real, aes(x=log(price))) +
 price_c = cut(real$price, breaks = c(7.49,37.78,118),labels = c("low","high"))
 real$price_c = price_c
 # table(price_c)
-real$price_c = ifelse(real$price_c=="low",0,1)
+real$price_c = ifelse(real$price_c=="low","0","1")
 #mean(real$price[-271])
 ```
 
@@ -248,24 +291,20 @@ train_ind <- sample(seq_len(nrow(real)), size = smp_size)
 train <- real[train_ind, ]
 test <- real[-train_ind, ]
 
-##Separate out the outcome variable:
-class <- as.data.frame(real$price_c)
+# ##Separate out the outcome variable:
+# class <- as.data.frame(real$price_c)
+# test_class <- class[-train_ind, ]
+# train_class <- class[train_ind, ]
 
 ##Scale the data
-standardized_real <- cbind(scale(real[,-8]),real[8])
-
+standardized_real <- cbind(scale(real[,-which(colnames(real)=="price_c")]),real[which(colnames(real)=="price_c")])
 ## split into predictors and outcome train and test data
-test_data <- standardized_real[-train_ind, ]
-train_data <- standardized_real[train_ind, ]
-
-test_class <- class[-train_ind, ]
-train_class <- class[train_ind, ]
+test_norm <- standardized_real[-train_ind, ]
+train_norm <- standardized_real[train_ind, ]
 ```
 
-
+```{r eval=F}
 ##### Logistic Regression
-
-```{r}
 logistic.error <- function(Train, Test) {
   logistic.out <- glm(price_c ~ ., data=Train, family="binomial") 
   pred.class <- predict(logistic.out, Test, type="response")
@@ -280,26 +319,28 @@ pred.error.lr <- round(logistic.error(train, test), digits=3)
 ##### Elastic Net
 
 ```{r}
-train$price_c <- as.factor(as.character(train$price_c))
-test$price_c <- as.factor(as.character(test$price_c))
-x_train <- model.matrix(price_c~., train)[,-1]
-y_train <- train$price_c
-x_test <- model.matrix(price_c~., test)[,-1]
-y_test <- test$price_c
-lambda.grid <- 10^seq(10,-2,length = 100)
+train_norm$price_c <- as.factor(as.character(train_norm$price_c))
+test_norm$price_c <- as.factor(as.character(test_norm$price_c))
+
+x_train <- model.matrix(price_c~.-price, train_norm)[,-1]
+y_train <- train_norm$price_c
+x_test <- model.matrix(price_c~.-price, test_norm)[,-1]
+y_test <- test_norm$price_c
+
+lambda.grid <- 10^seq(9,-3,length = 100)
 alpha.grid <- seq(0, 1, by = 0.1)
 
 set.seed(12345)
-foldid=sample(1:10,size=nrow(x_train),replace=TRUE)
+foldid = sample(1:10,size=nrow(x_train),replace=TRUE)
 
 pred.ela <- function(alpha) {
-  cv.lambda <- cv.glmnet(x_train,y_train,family='binomial',
-                         alpha=alpha,lambda = lambda.grid, foldid=foldid)
+  cv.lambda <- cv.glmnet(x_train, y_train,family='binomial',
+                         alpha=alpha, lambda = lambda.grid, foldid=foldid)
   
-  fit.ela <- glmnet(x_train,y_train,family='binomial',
-                           alpha=alpha,lambda=cv.lambda$lambda.1se)
+  fit.ela <- glmnet(x_train, y_train,family='binomial',
+                           alpha=alpha, lambda=cv.lambda$lambda.1se)
   pred <- predict(fit.ela, x_test)
-  pred <- ifelse(pred > 0.5, 1, 0)
+  pred <- ifelse(pred > 0.5, "1", "0")
   error <- mean(pred != data.matrix(y_test))
   error
 }
@@ -307,52 +348,217 @@ pred.ela <- function(alpha) {
 error.ela <- sapply(alpha.grid, pred.ela)
 error.ela.a <- cbind(as.data.frame(error.ela), as.data.frame(alpha.grid))
 colnames(error.ela.a) <- c("pred error", "alpha")
-pred.error.ela <- error.ela.a[which.min(error.ela),1]
+pred.error.ela <- error.ela.a[which.min(error.ela),]
 ```
 
-```{r eval=F}
-##### KNN
+```{r}
+##### ---------------------------------- KNN
+##Create function for misclassification rate from KNN; use default k=1
 KNN.error <- function(Train, Test, k=1) {
   Train.KNN <- Train[, which(names(Train) !="price_c")]
   Test.KNN <- Test[,which(names(Test) !="price_c")]
   Test.class <- Test$price_c
   Train.class <- Train$price_c
-
-  set.seed(12345)
+  
+  set.seed(1)
   pred.class=knn(Train.KNN, Test.KNN, Train.class, k=k)
   mean(Test.class != pred.class)
 }
 
-CV.errors <- function(CVdata, k, m){
-  M <- m
-  n <- nrow(CVdata)
-  k_values=1:k 
+
+##### ---------------------------------- KNN CV
+##Create function for misclassification rate from KNN after finding best k through CV
+KNN.CV.error <- function(Train, Test, k, m) {
+  M <- m # define M as the number of folds
+  n <- nrow(Train) # define number of obs in training data
+  k_values=1:k
+  num_k=length(k_values)
   
-  cv_error_df <- data.frame()
-  
-  set.seed(12345)
-  for(m in 1:M){
+  ##create data frame to store CV errors
+  cv_error_df <- matrix(0, nrow=num_k, ncol=M) %>%
+    as.data.frame(.) %>%
+    mutate(k=k_values)
+    colnames(cv_error_df) <- str_replace(colnames(cv_error_df), 
+                                         'V', 'fold')
+  set.seed(3124)
+  for(m in 1:M) {
+    CVdata <- Train
     CVdata <- CVdata[sample(nrow(CVdata)),]
-    folds <- cut(seq(1,n),breaks=M,labels=FALSE)
-    testIndexes <- which(folds==m, arr.ind=TRUE)
+    folds <- cut(seq(1,nrow(CVdata)),breaks=5,labels=FALSE)
+    testIndexes <- which(folds == m, arr.ind=TRUE)
     cv_tr <- CVdata[-testIndexes, ]
     cv_tst <- CVdata[testIndexes, ]
     
-    for(i in k_values){
-        K <- i
-        cv_error_df[i, m] <- KNN.error(cv_tr, cv_tst, K)
-        }
+    for(i in 1:num_k){
+      K <- k_values[i]
+      errs <- KNN.error(cv_tr, cv_tst, K)
+      cv_error_df[i, paste0('fold',m)] <- errs
     }
+  }
   
-  rownames(cv_error_df) <- paste0("k=", k_values)
-  names(cv_error_df) <- paste("fold", seq(1:m))
-  cv_error_df$"CV error" <- rowMeans(cv_error_df)
-  round(cv_error_df, digits=3)
+  cv_error_df <- as.data.frame(cv_error_df)
+  
+  # compute the mean cv error for each value of k
+  cv_mean_error <- cv_error_df[,which(names(cv_error_df) !="k")]
+  cv_mean_error <- rowMeans(cv_mean_error)
+  cv_mean_error
+  
+  final_k <- which(cv_mean_error==min(cv_mean_error))[1]
+  KNN.error(Train, Test, final_k)
 }
 
-k <- CV.errors(train, k=10, m=10)
+##### ---------------------------------- LDA
+##Create function for misclassification rate from LDA
+LDA.error <- function(Train, Test) {
+  lda.out <- lda(price_c ~ ., data=Train)
+  pred.class = predict(lda.out, Test)$class
+  mean(Test$price_c != pred.class)
+}
 
-pred.error.knn <- round(KNN.error(train, test, k=7), digits=3)
+
+##### ---------------------------------- QDA
+##Create function for misclassification rate from QDA
+QDA.error <- function(Train, Test) {
+  qda.out <- qda(price_c ~ ., data=Train)
+  pred.class = predict(qda.out, Test)$class
+  mean(Test$price_c != pred.class)
+}
+```
+
+```{r}
+lambda.grid <- 10^seq(9,-3,length = 100)
+set.seed(12345)
+foldid = sample(1:10,size=nrow(x_train),replace=TRUE)
+
+pred.ela.fix <- function(x_Train, y_Train, x_Test, y_Test) {
+  cv.lambda <- cv.glmnet(x_Train, y_Train,family='binomial',
+                         alpha=0.9, lambda = lambda.grid, foldid=foldid)
+  
+  fit.ela <- glmnet(x_Train, y_Train,family='binomial',
+                           alpha=0.9, lambda=cv.lambda$lambda.1se)
+  pred <- predict(fit.ela, x_Test)
+  pred <- ifelse(pred > 0.5, "1", "0")
+  error <- mean(pred != data.matrix(y_Test))
+  error
+}
+
+
+##Get errors
+KNN.errors = NULL
+KNN.CV.errors = NULL
+LDA.errors = NULL
+QDA.errors = NULL
+ELA.errors = NULL
+
+smp_size = floor(0.75 * nrow(standardized_real))
+
+for (i in 1:100) {
+  train_ind = sample(seq_len(nrow(standardized_real)), size = smp_size)
+  Train = standardized_real[train_ind, ]
+  Test = standardized_real[-train_ind, ]
+
+  x_train = model.matrix(price_c~.-price, Train)[,-1]
+  y_train = Train$price_c
+  x_test = model.matrix(price_c~.-price, Test)[,-1]
+  y_test = Test$price_c
+
+  #Train = train
+  #Test = test
+
+  ELA.errors[i] = pred.ela.fix(x_train,y_train,x_test,y_test)
+  KNN.errors[i] = KNN.error(Train, Test)
+  KNN.CV.errors[i] = KNN.CV.error(Train, Test, k=8, m=5)
+  LDA.errors[i] = LDA.error(Train, Test)
+  QDA.errors[i] = QDA.error(Train, Test)
+}
+
+# make data frame of errors
+Errors = data.frame(Error.rate=c(ELA.errors, KNN.errors, KNN.CV.errors, LDA.errors, QDA.errors),  Method=c(rep("Elastic Net", 100), rep("KNN-1", 100), rep("KNN CV", 100), rep("LDA", 100), rep("QDA", 100)))
+Errors$Method = factor(Errors$Method, levels=c("Elastic Net", "KNN-1", "KNN CV", "LDA", "QDA"))
+
+# plot errors
+boxplot(Error.rate ~ Method, data=Errors, col=c("#F8766D", "cornflowerblue", "#7CAE00", "#C77CFF", "pink"), ylab="Error Rate", main="", cex.axis=1)
+
+Errors %>%
+  group_by(Method) %>%
+  summarise(mean = mean(Error.rate), sd = sd(Error.rate),
+            min = min(Error.rate), max = max(Error.rate)) %>%
+  mutate_if(is.numeric, round, 3) %>%
+  as.data.frame()
+```
+
+```{r}
+colorfun = function (var) {
+  ggplot(real, aes(x = var)) +
+  geom_histogram(aes(color = price_c, fill = price_c), 
+                position = "identity", bins = 30, alpha = 0.4) +
+  scale_color_manual(values = c("#00AFBB", "#E7B800")) +
+  scale_fill_manual(values = c("#00AFBB", "#E7B800")) + 
+  labs(color = "Price",fill = "Price")
+}
+
+colorfun(real$date)
+colorfun(real$age)
+colorfun(real$MRT)
+colorfun(real$store)
+colorfun(real$latitude)
+colorfun(real$longitude)
+```
+
+
+
+
+#### Generalized Linear Model - Baseline Odds
+
+```{r}
+###proportional odds model
+library(MASS)
+real_c = data.frame(real[-1], price_c)
+names(real_c)[8] = "price_c"
+fit.plr = polr(price_c ~ .-price,data = real_c)
+summary(fit.plr)
+prd_prob.po = predict(fit.plr, real_c, type="prob")
+prd_labl.po = predict(fit.plr, real_c)
+label = data.frame(price_c,prd_labl_po)
+sum(label[,1]!=label[,2])
+###baseline odds model
+library(nnet)
+fit.bo = multinom(price_c~.-price,data=real_c)
+summary(fit.bo)
+prd_prob.bo = predict(fit.bo, type = 'prob')
+prd_labl.bo = predict(fit.bo)
+#label2 = data.frame(price_c,prd_labl_bo)
+#sum(label2[,1]!=label2[s,2])
+t.est1 = summary(fit.bo)$coefficients[1,]/summary(fit.bo)$standard.errors[1,]
+table.est1 = data.frame(Estimate1=summary(fit.bo)$coefficients[1,],
+                        std.error1=summary(fit.bo)$standard.errors[1,],
+                        t_value1=round(t_est1,3))
+t.est2 = summary(fit.bo)$coefficients[2,]/summary(fit.bo)$standard.errors[2,]
+table.est2 = data.frame(Estimate2=summary(fit.bo)$coefficients[2,],
+                        std.error2=summary(fit.bo)$standard.errors[2,],
+                        t_value2=round(t_est2,3))
+table.est = data.frame(table.est1, table.est2)
+knitr::kable(table.est)
+obslabel <- matrix(0, nrow = nrow(real), ncol = length(levels(price_c)))
+for (i in seq_len(nrow(real))) obslabel[i,which(colnames(prd_prob.bo)==real_c$price_c[i])] = 1
+resP.bo<-(obslabel-prd_prob.bo)/sqrt(prd_prob.bo*(1-prd_prob.bo))
+par(mfrow=c(1,2))
+plot(fit.bo$fitted.values[,2],resP.bo[,2],pch=16, cex=0.6, 
+     ylab='Pearson Residuals', xlab='Fitted Values',
+#     ylim=c(-10,10),
+     main='Baseline Odds Model - Medium Level')
+lines(smooth.spline(fit.bo$fitted.values[,2],resP.bo[,2], spar=2), col=2)
+lines(ksmooth(fit.bo$fitted.values[,2],resP.bo[,2], "normal", bandwidth=0.1), col='green')
+abline(h=0, lty=2, col='grey')
+plot(fit.bo$fitted.values[,3],resP.bo[,3],pch=16, cex=0.6, 
+     ylab='Pearson Residuals', xlab='Fitted Values',
+#     ylim=c(-10,10),
+     main='Baseline Odds Model - High Level')
+lines(smooth.spline(fit.bo$fitted.values[,3],resP.bo[,3], spar=2), col=2)
+lines(ksmooth(fit.bo$fitted.values[,3],resP.bo[,3], "normal", bandwidth=0.1), col='green')
+abline(h=0, lty=2, col='grey')
+library(lawstat)
+runs.test(y = resP.bo, plot.it = FALSE)
 ```
 
 ```{r eval=F}
@@ -519,107 +725,6 @@ tmp = table(mypredict, real_p$price_c[-train_ind])
 ```
 
 
-```{r}
-pe <- as.data.frame(c(round(pred.error.lr,3),  
-                      round(pred.error.ela,3)))
-
-rownames(pe) <- c("Logistic Regression",
-                  "Elastic Net")
-colnames(pe) <- "Prediction Error"
-
-knitr::kable(pe, align = "c")
-```
-
-
-
-#### Generalized Linear Model
-
-```{r}
-###proportional odds model
-library(MASS)
-real_c = data.frame(real[-1], price_c)
-names(real_c)[8] = "price_c"
-fit.plr = polr(price_c ~ .-price,data = real_c)
-summary(fit.plr)
-prd_prob.po = predict(fit.plr, real_c, type="prob")
-prd_labl.po = predict(fit.plr, real_c)
-label = data.frame(price_c,prd_labl_po)
-sum(label[,1]!=label[,2])
-###baseline odds model
-library(nnet)
-fit.bo = multinom(price_c~.-price,data=real_c)
-summary(fit.bo)
-prd_prob.bo = predict(fit.bo, type = 'prob')
-prd_labl.bo = predict(fit.bo)
-#label2 = data.frame(price_c,prd_labl_bo)
-#sum(label2[,1]!=label2[s,2])
-t.est1 = summary(fit.bo)$coefficients[1,]/summary(fit.bo)$standard.errors[1,]
-table.est1 = data.frame(Estimate1=summary(fit.bo)$coefficients[1,],
-                        std.error1=summary(fit.bo)$standard.errors[1,],
-                        t_value1=round(t_est1,3))
-t.est2 = summary(fit.bo)$coefficients[2,]/summary(fit.bo)$standard.errors[2,]
-table.est2 = data.frame(Estimate2=summary(fit.bo)$coefficients[2,],
-                        std.error2=summary(fit.bo)$standard.errors[2,],
-                        t_value2=round(t_est2,3))
-table.est = data.frame(table.est1, table.est2)
-knitr::kable(table.est)
-obslabel <- matrix(0, nrow = nrow(real), ncol = length(levels(price_c)))
-for (i in seq_len(nrow(real))) obslabel[i,which(colnames(prd_prob.bo)==real_c$price_c[i])] = 1
-resP.bo<-(obslabel-prd_prob.bo)/sqrt(prd_prob.bo*(1-prd_prob.bo))
-par(mfrow=c(1,2))
-plot(fit.bo$fitted.values[,2],resP.bo[,2],pch=16, cex=0.6, 
-     ylab='Pearson Residuals', xlab='Fitted Values',
-#     ylim=c(-10,10),
-     main='Baseline Odds Model - Medium Level')
-lines(smooth.spline(fit.bo$fitted.values[,2],resP.bo[,2], spar=2), col=2)
-lines(ksmooth(fit.bo$fitted.values[,2],resP.bo[,2], "normal", bandwidth=0.1), col='green')
-abline(h=0, lty=2, col='grey')
-plot(fit.bo$fitted.values[,3],resP.bo[,3],pch=16, cex=0.6, 
-     ylab='Pearson Residuals', xlab='Fitted Values',
-#     ylim=c(-10,10),
-     main='Baseline Odds Model - High Level')
-lines(smooth.spline(fit.bo$fitted.values[,3],resP.bo[,3], spar=2), col=2)
-lines(ksmooth(fit.bo$fitted.values[,3],resP.bo[,3], "normal", bandwidth=0.1), col='green')
-abline(h=0, lty=2, col='grey')
-library(lawstat)
-runs.test(y = resP.bo, plot.it = FALSE)
-```
-
-#### LOOCV
-```{r}
-train.control = trainControl(method="LOOCV")
-
-###AIC method
-model1 = train(price ~ date + age + MRT + store + latitude + longitude + age:longitude + MRT:store +
-               MRT:latitude + store:latitude, data = real, method = "lm", trControl = train.control)
-
-###BIC method
-model2 = train(price ~ date + age + MRT + store + latitude + MRT:store + MRT:latitude + store:latitude,
-               data = real, method = "lm", trControl = train.control)
-
-###regsubsets method
-model3 = train(price ~ date + age + MRT + store + latitude + age:latitude + MRT:store + MRT:latitude +
-                 store:latitude, data = real, method = "lm", trControl = train.control)
-
-###full model
-model4 = train(formula, data = real, method = "lm", trControl = train.control)
-
-RMSE = c(model1$results$RMSE, model2$results$RMSE, model3$results$RMSE, model4$results$RMSE)
-R2 = c(model1$results$Rsquared, model2$results$Rsquared, model3$results$Rsquared,
-       model4$results$Rsquared)
-MAE = c(model1$results$MAE, model2$results$MAE, model3$results$MAE,
-       model4$results$MAE)
-table.LOOCV = data.frame(RMSE, R2, MAE)
-rownames(table.LOOCV) = c('M1', 'M2', 'M3', 'M4')
-knitr::kable(table.LOOCV)
-```
-### Final model diagnostics
-```{r}
-final.fit = lm(price ~ date + age + MRT + store + latitude + MRT:store + MRT:latitude + store:latitude,
-               data = real)
-summary(final.fit)
-par(mfrow = c(2,2))
-plot(final.fit, which = 1:4)
 
 
 
